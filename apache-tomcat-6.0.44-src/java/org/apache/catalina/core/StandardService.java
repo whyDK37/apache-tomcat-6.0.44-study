@@ -24,6 +24,7 @@ import java.beans.PropertyChangeSupport;
 import javax.management.MBeanRegistration;
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
+
 import org.apache.catalina.Container;
 import org.apache.catalina.Engine;
 import org.apache.catalina.Lifecycle;
@@ -38,7 +39,9 @@ import org.apache.catalina.util.StringManager;
 import org.apache.juli.logging.Log;
 import org.apache.juli.logging.LogFactory;
 import org.apache.tomcat.util.modeler.Registry;
+
 import java.util.ArrayList;
+
 import org.apache.catalina.Executor;
 
 
@@ -46,15 +49,19 @@ import org.apache.catalina.Executor;
  * Standard implementation of the <code>Service</code> interface.  The
  * associated Container is generally an instance of Engine, but this is
  * not required.
+ * <p/>
+ * StandardService的主要功能点如下：
+ * 管理多个Connecter
+ * 管理一个容器Container
+ * 实现Lifecycle，主要管理多个Connector和一个Container的生命周期
  *
  * @author Craig R. McClanahan
  */
 
 public class StandardService
-        implements Lifecycle, Service, MBeanRegistration 
- {
+        implements Lifecycle, Service, MBeanRegistration {
     private static Log log = LogFactory.getLog(StandardService.class);
-   
+
 
     // ----------------------------------------------------- Instance Variables
 
@@ -63,7 +70,7 @@ public class StandardService
      * Descriptive information about this component implementation.
      */
     private static final String info =
-        "org.apache.catalina.core.StandardService/1.0";
+            "org.apache.catalina.core.StandardService/1.0";
 
 
     /**
@@ -82,7 +89,7 @@ public class StandardService
      * The string manager for this package.
      */
     private static final StringManager sm =
-        StringManager.getManager(Constants.Package);
+            StringManager.getManager(Constants.Package);
 
     /**
      * The <code>Server</code> that owns this Service, if any.
@@ -105,9 +112,9 @@ public class StandardService
      * The set of Connectors associated with this Service.
      */
     protected Connector connectors[] = new Connector[0];
-    
+
     /**
-     * 
+     *
      */
     protected ArrayList<Executor> executors = new ArrayList<Executor>();
 
@@ -147,26 +154,33 @@ public class StandardService
      */
     public void setContainer(Container container) {
 
+        // 先判断当前的这个 Service 有没有已经关联了 Container，如果已经关联了，那么去掉这个关联关系，
+        // 如果这个 oldContainer 已经被启动了，结束它的生命周期。
         Container oldContainer = this.container;
         if ((oldContainer != null) && (oldContainer instanceof Engine))
             ((Engine) oldContainer).setService(null);
+
+
         this.container = container;
         if ((this.container != null) && (this.container instanceof Engine))
             ((Engine) this.container).setService(this);
         if (started && (this.container != null) &&
-            (this.container instanceof Lifecycle)) {
+                (this.container instanceof Lifecycle)) {
             try {
                 ((Lifecycle) this.container).start();
             } catch (LifecycleException e) {
                 ;
             }
         }
+
+        //这里值得注意的地方就是，修改 Container 时要将新的 Container 关联到每个 Connector，
+        // 此处使用的是多个Connector关联一个Container，而没有双向关联，不然这个关联关系将会很难维护。
         synchronized (connectors) {
             for (int i = 0; i < connectors.length; i++)
-                connectors[i].setContainer(this.container);
+                connectors[i].setContainer(this.container);//多个Connector关联某个Container，而没有进行双向关联
         }
         if (started && (oldContainer != null) &&
-            (oldContainer instanceof Lifecycle)) {
+                (oldContainer instanceof Lifecycle)) {
             try {
                 ((Lifecycle) oldContainer).stop();
             } catch (LifecycleException e) {
@@ -180,8 +194,8 @@ public class StandardService
     }
 
     public ObjectName getContainerName() {
-        if( container instanceof ContainerBase ) {
-            return ((ContainerBase)container).getJmxName();
+        if (container instanceof ContainerBase) {
+            return ((ContainerBase) container).getJmxName();
         }
         return null;
     }
@@ -249,6 +263,19 @@ public class StandardService
     /**
      * Add a new Connector to the set of defined Connectors, and associate it
      * with this Service's Container.
+     * <p/>
+     * 这个方法利用了CopyOnWriteArrayList类似的思想，先将原始的数据通过生成长度+1的数组，
+     * 再使用System.arraycopy()来生成一份新的数组，然后在新的数据对象上进行写，
+     * 写完后再将原来的引用指向到当前这个数据对象。CopyOnWriteArrayList的核心思想是
+     * 利用高并发往往是读多写少的特性，对读操作不加锁，对写操作，先复制一份新的集合，
+     * 在新的集合上面修改，然后将新集合赋值给旧的引用，并通过volatile 保证其可见性，
+     * 当然写操作的锁是必不可少的了，在做复制的时候，其它线程还是可以在原有的老的对象上进行只读操作，
+     * 所以不会阻塞读操作。CopyOnWriteArrayList中写操作需要大面积复制数组，所以性能肯定很差，
+     * 但是读操作因为操作的对象和写操作不是同一个对象，读之间也不需要加锁，读和写之间的同步处理
+     * 只是在写完后通过一个简单的“=”将引用指向新的数组对象上来，这个几乎不需要时间，这样读操作就很快很安全，
+     * 适合在多线程里使用，绝对不会发生ConcurrentModificationException。关于CopyOnWriteArrayList的性能说明，
+     * 可以参考CopyOnWriteArrayList与Collections.synchronizedList的性能对比。因此，此处会遇到与
+     * CopyOnWriteArrayList同样的性能问题。
      *
      * @param connector The Connector to be added
      */
@@ -290,7 +317,7 @@ public class StandardService
 
     public ObjectName[] getConnectorNames() {
         ObjectName results[] = new ObjectName[connectors.length];
-        for (int i=0; i<results.length; i++) {
+        for (int i = 0; i < results.length; i++) {
             results[i] = connectors[i].getObjectName();
         }
         return results;
@@ -405,7 +432,7 @@ public class StandardService
 
 
     /**
-     * Get the lifecycle listeners associated with this lifecycle. If this 
+     * Get the lifecycle listeners associated with this lifecycle. If this
      * Lifecycle has no listeners registered, a zero-length array is returned.
      */
     public LifecycleListener[] findLifecycleListeners() {
@@ -425,9 +452,10 @@ public class StandardService
         lifecycle.removeLifecycleListener(listener);
 
     }
-    
+
     /**
      * Adds a named executor to the service
+     *
      * @param ex Executor
      */
     public void addExecutor(Executor ex) {
@@ -446,6 +474,7 @@ public class StandardService
 
     /**
      * Retrieves all executors
+     *
      * @return Executor[]
      */
     public Executor[] findExecutors() {
@@ -458,6 +487,7 @@ public class StandardService
 
     /**
      * Retrieves executor by name, null if not found
+     *
      * @param name String
      * @return Executor
      */
@@ -473,11 +503,12 @@ public class StandardService
 
     /**
      * Removes an executor from the service
+     *
      * @param ex Executor
      */
     public void removeExecutor(Executor ex) {
         synchronized (executors) {
-            if ( executors.remove(ex) && started ) {
+            if (executors.remove(ex) && started) {
                 try {
                     ex.stop();
                 } catch (LifecycleException e) {
@@ -488,15 +519,14 @@ public class StandardService
     }
 
 
-
     /**
      * Prepare for the beginning of active use of the public methods of this
      * component.  This method should be called before any of the public
      * methods of this component are utilized.  It should also send a
      * LifecycleEvent of type START_EVENT to any registered listeners.
      *
-     * @exception LifecycleException if this component detects a fatal error
-     *  that prevents this component from being used
+     * @throws LifecycleException if this component detects a fatal error
+     *                            that prevents this component from being used
      */
     public void start() throws LifecycleException {
 
@@ -507,13 +537,13 @@ public class StandardService
             }
             return;
         }
-        
-        if( ! initialized )
-            init(); 
+
+        if (!initialized)
+            init();
 
         // Notify our interested LifecycleListeners
         lifecycle.fireLifecycleEvent(BEFORE_START_EVENT, null);
-        if(log.isInfoEnabled())
+        if (log.isInfoEnabled())
             log.info(sm.getString("standardService.start.name", this.name));
         lifecycle.fireLifecycleEvent(START_EVENT, null);
         started = true;
@@ -528,7 +558,7 @@ public class StandardService
         }
 
         synchronized (executors) {
-            for ( int i=0; i<executors.size(); i++ ) {
+            for (int i = 0; i < executors.size(); i++) {
                 executors.get(i).start();
             }
         }
@@ -545,7 +575,7 @@ public class StandardService
                 }
             }
         }
-        
+
         // Notify our interested LifecycleListeners
         lifecycle.fireLifecycleEvent(AFTER_START_EVENT, null);
 
@@ -558,8 +588,8 @@ public class StandardService
      * instance of this component.  It should also send a LifecycleEvent
      * of type STOP_EVENT to any registered listeners.
      *
-     * @exception LifecycleException if this component detects a fatal error
-     *  that needs to be reported
+     * @throws LifecycleException if this component detects a fatal error
+     *                            that needs to be reported
      */
     public void stop() throws LifecycleException {
 
@@ -592,9 +622,9 @@ public class StandardService
         }
 
         lifecycle.fireLifecycleEvent(STOP_EVENT, null);
-        if(log.isInfoEnabled())
+        if (log.isInfoEnabled())
             log.info
-                (sm.getString("standardService.stop.name", this.name));
+                    (sm.getString("standardService.stop.name", this.name));
         started = false;
 
         // Stop our defined Container second
@@ -620,12 +650,12 @@ public class StandardService
         }
 
         synchronized (executors) {
-            for ( int i=0; i<executors.size(); i++ ) {
+            for (int i = 0; i < executors.size(); i++) {
                 executors.get(i).stop();
             }
         }
 
-        if( oname==controller ) {
+        if (oname == controller) {
             // we registered ourself on init().
             // That should be the typical case - this object is just for
             // backward compat, nobody should bother to load it explicitely
@@ -633,15 +663,15 @@ public class StandardService
             Executor[] executors = findExecutors();
             for (int i = 0; i < executors.length; i++) {
                 try {
-                    ObjectName executorObjectName = 
-                        new ObjectName(domain + ":type=Executor,name=" + executors[i].getName());
+                    ObjectName executorObjectName =
+                            new ObjectName(domain + ":type=Executor,name=" + executors[i].getName());
                     Registry.getRegistry(null, null).unregisterComponent(executorObjectName);
                 } catch (Exception e) {
                     // Ignore (invalid ON, which cannot happen)
                 }
             }
         }
-        
+
 
         // Notify our interested LifecycleListeners
         lifecycle.fireLifecycleEvent(AFTER_STOP_EVENT, null);
@@ -654,47 +684,46 @@ public class StandardService
      * to bind to restricted ports under Unix operating environments.
      */
     public void initialize()
-            throws LifecycleException
-    {
+            throws LifecycleException {
         // Service shouldn't be used with embeded, so it doesn't matter
         if (initialized) {
-            if(log.isInfoEnabled())
+            if (log.isInfoEnabled())
                 log.info(sm.getString("standardService.initialize.initialized"));
             return;
         }
         initialized = true;
 
-        if( oname==null ) {
+        if (oname == null) {
             try {
                 // Hack - Server should be deprecated...
-                Container engine=this.getContainer();
-                domain=engine.getName();
-                oname=new ObjectName(domain + ":type=Service,serviceName="+name);
-                this.controller=oname;
+                Container engine = this.getContainer();
+                domain = engine.getName();
+                oname = new ObjectName(domain + ":type=Service,serviceName=" + name);
+                this.controller = oname;
                 Registry.getRegistry(null, null)
-                    .registerComponent(this, oname, null);
-                
+                        .registerComponent(this, oname, null);
+
                 Executor[] executors = findExecutors();
                 for (int i = 0; i < executors.length; i++) {
-                    ObjectName executorObjectName = 
-                        new ObjectName(domain + ":type=Executor,name=" + executors[i].getName());
+                    ObjectName executorObjectName =
+                            new ObjectName(domain + ":type=Executor,name=" + executors[i].getName());
                     Registry.getRegistry(null, null)
-                        .registerComponent(executors[i], executorObjectName, null);
+                            .registerComponent(executors[i], executorObjectName, null);
                 }
-                
+
             } catch (Exception e) {
-                log.error(sm.getString("standardService.register.failed",domain),e);
+                log.error(sm.getString("standardService.register.failed", domain), e);
             }
-            
-            
+
+
         }
-        if( server==null ) {
+        if (server == null) {
             // Register with the server 
             // HACK: ServerFactory should be removed...
-            
+
             ServerFactory.getServer().addService(this);
         }
-               
+
 
         // Initialize our defined Connectors
         synchronized (connectors) {
@@ -713,17 +742,17 @@ public class StandardService
             }
         }
     }
-    
+
     public void destroy() throws LifecycleException {
-        if( started ) stop();
+        if (started) stop();
         // FIXME unregister should be here probably -- stop doing that ?
     }
 
     public void init() {
         try {
             initialize();
-        } catch( Throwable t ) {
-            log.error(sm.getString("standardService.initialize.failed",domain),t);
+        } catch (Throwable t) {
+            log.error(sm.getString("standardService.initialize.failed", domain), t);
         }
     }
 
@@ -744,9 +773,9 @@ public class StandardService
 
     public ObjectName preRegister(MBeanServer server,
                                   ObjectName name) throws Exception {
-        oname=name;
-        mserver=server;
-        domain=name.getDomain();
+        oname = name;
+        mserver = server;
+        domain = name.getDomain();
         return name;
     }
 
