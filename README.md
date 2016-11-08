@@ -3,7 +3,10 @@
 
 ## 启动
 org.apache.catalina.startup.Bootstrap
+
 -Dcatalina.home=catalina-home -Dcatalina.base=catalina-home -Djava.endorsed.dirs=catalina-home/endorsed -Djava.io.tmpdir=catalina-home/temp -Djava.util.logging.manager=org.apache.juli.ClassLoaderLogManager -Djava.util.logging.config.file=catalina-home/conf/logging.properties
+
+org.apache.catalina.util.ServerInfo
  ***
 # 参考博客
  - [Tomcat源码阅读系列（一）使用IntelliJ IDEA运行Tomcat6源码](http://blog.csdn.net/yangzl2008/article/details/43982747)
